@@ -32,11 +32,10 @@ defmodule Samly.SPHandler do
 
     saml_encoding = conn.body_params["SAMLEncoding"]
     saml_response = conn.body_params["SAMLResponse"]
-    relay_state = conn.body_params["RelayState"] |> safe_decode_www_form()
+    relay_state = conn.body_params["RelayState"] |> URI.decode_www_form()
 
     with {:ok, assertion} <- Helper.decode_idp_auth_resp(sp, saml_encoding, saml_response),
          :ok <- validate_authresp(conn, assertion, relay_state),
-         assertion = %Assertion{assertion | idp_id: idp_id},
          conn = conn |> put_private(:samly_assertion, assertion),
          {:halted, %Conn{halted: false} = conn} <- {:halted, pipethrough(conn, pipeline)} do
       updated_assertion = conn.private[:samly_assertion]
@@ -119,14 +118,14 @@ defmodule Samly.SPHandler do
     get_session(conn, "target_url") || "/"
   end
 
-  def handle_logout_response(conn) do
+  def handle_logout(conn) do
     %IdpData{id: idp_id} = idp = conn.private[:samly_idp]
     %IdpData{esaml_idp_rec: _idp_rec, esaml_sp_rec: sp_rec} = idp
     sp = ensure_sp_uris_set(sp_rec, conn)
 
-    saml_encoding = conn.body_params["SAMLEncoding"]
-    saml_response = conn.body_params["SAMLResponse"]
-    relay_state = conn.body_params["RelayState"] |> safe_decode_www_form()
+    saml_encoding = conn.params["SAMLEncoding"]
+    saml_response = conn.params["SAMLResponse"]
+    relay_state = conn.params["RelayState"] |> URI.decode_www_form()
 
     with {:ok, _payload} <- Helper.decode_idp_signout_resp(sp, saml_encoding, saml_response),
          ^relay_state when relay_state != nil <- get_session(conn, "relay_state"),
@@ -138,11 +137,27 @@ defmodule Samly.SPHandler do
     else
       error -> conn |> send_resp(403, "invalid_request #{inspect(error)}")
     end
+  end
 
-    # rescue
-    #   error ->
-    #     Logger.error("#{inspect error}")
-    #     conn |> send_resp(500, "request_failed")
+  def handle_logout_response(conn) do
+    %IdpData{id: idp_id} = idp = conn.private[:samly_idp]
+    %IdpData{esaml_idp_rec: _idp_rec, esaml_sp_rec: sp_rec} = idp
+    sp = ensure_sp_uris_set(sp_rec, conn)
+
+    saml_encoding = conn.body_params["SAMLEncoding"]
+    saml_response = conn.body_params["SAMLResponse"]
+    relay_state = conn.body_params["RelayState"] |> URI.decode_www_form()
+
+    with {:ok, _payload} <- Helper.decode_idp_signout_resp(sp, saml_encoding, saml_response),
+         ^relay_state when relay_state != nil <- get_session(conn, "relay_state"),
+         ^idp_id <- get_session(conn, "idp_id"),
+         target_url when target_url != nil <- get_session(conn, "target_url") do
+      conn
+      |> configure_session(drop: true)
+      |> redirect(302, target_url)
+    else
+      error -> conn |> send_resp(403, "invalid_request #{inspect(error)}")
+    end
   end
 
   # non-ui logout request from IDP
@@ -153,7 +168,7 @@ defmodule Samly.SPHandler do
 
     saml_encoding = conn.body_params["SAMLEncoding"]
     saml_request = conn.body_params["SAMLRequest"]
-    relay_state = conn.body_params["RelayState"] |> safe_decode_www_form()
+    relay_state = conn.body_params["RelayState"] |> URI.decode_www_form()
 
     with {:ok, payload} <- Helper.decode_idp_signout_req(sp, saml_encoding, saml_request) do
       Esaml.esaml_logoutreq(name: nameid, issuer: _issuer) = payload
@@ -187,13 +202,5 @@ defmodule Samly.SPHandler do
           relay_state
         )
     end
-
-    # rescue
-    #   error ->
-    #     Logger.error("#{inspect error}")
-    #     conn |> send_resp(500, "request_failed")
   end
-
-  defp safe_decode_www_form(nil), do: ""
-  defp safe_decode_www_form(data), do: URI.decode_www_form(data)
 end
