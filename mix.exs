@@ -30,7 +30,7 @@ defmodule Samly.Mixfile do
   defp deps() do
     [
       {:plug, "~> 1.6"},
-      {:esaml, "~> 4.2"},
+      {:esaml, github: "polymetis/esaml", ref: "b967daec49e6de6cb11651647af5195e71187e9b"},
       {:sweet_xml, "~> 0.6.6"},
       {:ex_doc, "~> 0.19.0", only: :dev, runtime: false},
       {:inch_ex, "~> 1.0", only: [:dev, :test]}
